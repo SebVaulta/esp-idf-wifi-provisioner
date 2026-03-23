@@ -11,6 +11,7 @@ idf_component_register(
     REQUIRES
         nvs_flash
         esp_wifi
+        mqtt
         esp_netif
         esp_http_server
         esp_event

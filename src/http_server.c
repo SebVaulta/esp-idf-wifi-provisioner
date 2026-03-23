@@ -7,6 +7,7 @@
 
 #include "wifi_prov_internal.h"
 #include "esp_wifi.h"
+#include "esp_mac.h"
 #include "esp_http_server.h"
 #include "esp_event.h"
 
@@ -16,6 +17,7 @@ static const char *TAG = "wifi_prov_http";
 
 static httpd_handle_t s_server = NULL;
 static const wifi_prov_config_t *s_page_config = NULL;
+static char s_device_id[32] = "";
 
 /* ── Event posted when the user submits credentials ─────────────────── */
 
@@ -79,13 +81,15 @@ static esp_err_t config_handler(httpd_req_t *req)
              "\"portal_subheader\":\"%s\","
              "\"connected_header\":\"%s\","
              "\"connected_subheader\":\"%s\","
-             "\"footer\":\"%s\"}",
+             "\"footer\":\"%s\","
+             "\"device_id\":\"%s\"}",
              s_page_config->page_title,
              s_page_config->portal_header,
              s_page_config->portal_subheader,
              s_page_config->connected_header,
              s_page_config->connected_subheader,
-             s_page_config->page_footer);
+             s_page_config->page_footer,
+             s_device_id);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
@@ -209,6 +213,17 @@ static esp_err_t save_handler(httpd_req_t *req)
         url_decode(creds.password, sizeof(creds.password), pass_start, pass_len);
     }
 
+    /* Parse optional MQTT token */
+    char *mt_start = strstr(buf, "mqtt_token=");
+    char mqtt_token[65] = {0};
+    if (mt_start) {
+        mt_start += strlen("mqtt_token=");
+        char *mt_end = strchr(mt_start, '&');
+        size_t mt_len = mt_end ? (size_t)(mt_end - mt_start) : strlen(mt_start);
+        url_decode(mqtt_token, sizeof(mqtt_token), mt_start, mt_len);
+    }
+
+
     ESP_LOGI(TAG, "Received credentials – SSID: \"%s\"", creds.ssid);
 
     /* Try connecting while keeping the AP alive */
@@ -217,14 +232,34 @@ static esp_err_t save_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
 
     if (err == ESP_OK) {
-        nvs_store_save(creds.ssid, creds.password);
-        httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
+        /* WiFi connected; verify MQTT server using provided/stored token */
+        TickType_t mqtt_wait = pdMS_TO_TICKS(1000); /* 1s */
+        esp_err_t mqtt_err = wifi_prov_check_mqtt(s_device_id[0] ? s_device_id : NULL,
+                                                 mqtt_token[0] ? mqtt_token : NULL,
+                                                 mqtt_wait);
+        if (mqtt_err == ESP_OK) {
+            nvs_store_save(creds.ssid, creds.password);
+            if (mqtt_token[0] != '\0') {
+                nvs_store_save_mqtt_token(mqtt_token);
+            }
+            /* Send success response first, then finalize/tear down portal
+               to avoid stopping the HTTP server from inside the active
+               request handler which can deadlock. */
+            httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
 
-        /* Post event so the orchestrator can switch to STA-only mode */
-        esp_event_post(WIFI_PROV_EVENT, WIFI_PROV_EVENT_CREDENTIALS_SET,
-                       &creds, sizeof(creds), pdMS_TO_TICKS(100));
+            esp_event_post(WIFI_PROV_EVENT, WIFI_PROV_EVENT_CREDENTIALS_SET,
+                           &creds, sizeof(creds), pdMS_TO_TICKS(100));
+
+            /* Finalise and tear down the portal after responding */
+            wifi_prov_finalize_connection();
+        } else {
+            /* WiFi ok but MQTT/server failure — disconnect STA and let portal retry */
+            esp_wifi_disconnect();
+            httpd_resp_send(req, "{\"success\":false,\"error\":\"server\"}", HTTPD_RESP_USE_STRLEN);
+        }
     } else {
-        httpd_resp_send(req, "{\"success\":false}", HTTPD_RESP_USE_STRLEN);
+        /* WiFi connection failed */
+        httpd_resp_send(req, "{\"success\":false,\"error\":\"wifi\"}", HTTPD_RESP_USE_STRLEN);
     }
 
     return ESP_OK;
@@ -247,6 +282,15 @@ esp_err_t http_server_start(uint16_t port, const wifi_prov_config_t *page_config
     }
 
     s_page_config = page_config;
+
+    /* Precompute device id (MAC) so it is available to the portal immediately */
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        snprintf(s_device_id, sizeof(s_device_id), "%02X%02X%02X%02X%02X%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        s_device_id[0] = '\0';
+    }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port     = port;

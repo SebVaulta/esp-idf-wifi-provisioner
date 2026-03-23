@@ -12,6 +12,7 @@
 #define NVS_NAMESPACE "wifi_prov"
 #define NVS_KEY_SSID  "ssid"
 #define NVS_KEY_PASS  "pass"
+#define NVS_KEY_MQTT_TOKEN "mqtt_token"
 
 static const char *TAG = "wifi_prov_nvs";
 
@@ -90,4 +91,51 @@ esp_err_t nvs_store_erase(void)
 
     ESP_LOGI(TAG, "Erased stored credentials");
     return err;
+}
+
+esp_err_t nvs_store_save_mqtt_token(const char *mqtt_token)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS (%s)", esp_err_to_name(err));
+        return err;
+    }
+
+    if (mqtt_token && mqtt_token[0] != '\0') {
+        err = nvs_set_str(handle, NVS_KEY_MQTT_TOKEN, mqtt_token);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to save MQTT token (%s)", esp_err_to_name(err));
+            nvs_close(handle);
+            return err;
+        }
+    } else {
+        nvs_erase_key(handle, NVS_KEY_MQTT_TOKEN);
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Saved MQTT token");
+    }
+    return err;
+}
+
+esp_err_t nvs_store_load_mqtt_token(char *mqtt_token, size_t len)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGD(TAG, "No stored mqtt token (nvs_open: %s)", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_get_str(handle, NVS_KEY_MQTT_TOKEN, mqtt_token, &len);
+    if (err != ESP_OK) {
+        mqtt_token[0] = '\0';
+    }
+
+    nvs_close(handle);
+    return ESP_OK;
 }

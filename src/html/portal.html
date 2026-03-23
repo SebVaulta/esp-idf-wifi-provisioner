@@ -174,6 +174,7 @@
 		<div class="c" style="display: none">
 			<h1 id="hdr"></h1>
 			<p id="sub"></p>
+			<p id="device-id" class="footer" style="text-align:center; margin-top:8px; display:none"></p>
 			<div id="portal">
 				<div id="nets">
 					<div id="scanning">
@@ -184,8 +185,16 @@
 				<form id="frm" autocomplete="off">
 					<label for="s">SSID</label>
 					<input type="text" id="s" name="ssid" required maxlength="32" autocomplete="off" />
-					<label for="p">Password</label>
+					<label for="p">WiFi Password</label>
 					<input type="text" id="p" name="password" maxlength="64" autocomplete="off" />
+					<details id="advanced" style="margin-top:12px">
+						<summary style="cursor:pointer;font-weight:600">Advanced</summary>
+						<div style="padding:10px 0">
+							<div style="background:#fff4f4;color:#9b1c1c;padding:8px;border-radius:4px;margin-bottom:8px;font-size:0.85em">Warning: do not change these settings unless you know what you are doing.</div>
+							<label for="mt">MQTT Token</label>
+							<input type="password" id="mt" name="mqtt_token" maxlength="64" autocomplete="off" />
+						</div>
+					</details>
 					<div id="err" class="error" style="display: none"></div>
 					<button type="submit" id="btn">Connect</button>
 				</form>
@@ -239,6 +248,11 @@
 					} else {
 						document.getElementById('ftr').remove()
 					}
+					if (cfg.device_id) {
+						var el = document.getElementById('device-id')
+						el.textContent = 'Device ID: ' + cfg.device_id
+						el.style.display = ''
+					}
 					document.querySelector('.c').style.display = ''
 				})
 			fetch('/scan')
@@ -275,7 +289,10 @@
 				fetch('/save', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-					body: 'ssid=' + encodeURIComponent(document.getElementById('s').value) + '&password=' + encodeURIComponent(document.getElementById('p').value),
+					body:
+						'ssid=' + encodeURIComponent(document.getElementById('s').value) +
+						'&password=' + encodeURIComponent(document.getElementById('p').value) +
+						'&mqtt_token=' + encodeURIComponent(document.getElementById('mt').value),
 				})
 					.then((r) => r.json())
 					.then((d) => {
@@ -293,7 +310,13 @@
 								doneSub.remove()
 							}
 						} else {
-							err.textContent = 'Connection failed. Please check your credentials and try again.'
+							var msg = 'Connection failed. Please check your credentials and try again.'
+							if (d.error === 'wifi') {
+								msg = 'WiFi connection failed. Check SSID/password.'
+							} else if (d.error === 'server') {
+								msg = 'WiFi connected but server/auth failed. Check MQTT token.'
+							}
+							err.textContent = msg
 							err.style.display = ''
 							btn.disabled = false
 							btn.textContent = 'Connect'
