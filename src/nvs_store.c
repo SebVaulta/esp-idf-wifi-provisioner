@@ -77,22 +77,6 @@ esp_err_t nvs_store_save(const char *ssid, const char *password)
     return err;
 }
 
-esp_err_t nvs_store_erase(void)
-{
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    nvs_erase_all(handle);
-    err = nvs_commit(handle);
-    nvs_close(handle);
-
-    ESP_LOGI(TAG, "Erased stored credentials");
-    return err;
-}
-
 esp_err_t nvs_store_save_mqtt_token(const char *mqtt_token)
 {
     nvs_handle_t handle;
@@ -138,4 +122,20 @@ esp_err_t nvs_store_load_mqtt_token(char *mqtt_token, size_t len)
 
     nvs_close(handle);
     return ESP_OK;
+}
+
+esp_err_t nvs_store_erase(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    nvs_erase_all(handle);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    ESP_LOGI(TAG, "Erased stored credentials");
+    return err;
 }
